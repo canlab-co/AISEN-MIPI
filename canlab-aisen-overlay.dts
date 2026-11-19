@@ -1,0 +1,123 @@
+// SPDX-License-Identifier: GPL-2.0-only
+// Device tree overlay for the AISEN single-channel MIPI CSI-2 camera on
+// Raspberry Pi 5 (BCM2712 + RP1 CFE) -- DOWNSTREAM.
+//
+//   VC0 : 640x480 UYVY  (aisen pad0 -> csi2 sink0 -> csi2_ch0)
+//   D-PHY: 2 or 4 data lanes, CONTINUOUS clock, 200 MHz link (fixed)
+//   Camera is started/stopped by the driver over I2C (0x33, reg 0x30).
+//
+// Uses the STOCK downstream RP1 CFE ("raspberrypi,rp1-cfe").
+//
+// Lanes: 4 by default. The "2lane" parameter switches data-lanes to <1 2> on
+// both the sensor and the CSI endpoint (same mechanism as imx219/imx290).
+//
+// config.txt:
+//   camera_auto_detect=0
+//   dtoverlay=canlab-aisen                               (4 lanes, cam1)
+//   dtoverlay=canlab-aisen,2lane                        (2 lanes, cam1)
+//   dtoverlay=canlab-aisen,2lane,cam0                    (2 lanes, cam0)
+/dts-v1/;
+/plugin/;
+
+/{
+	compatible = "brcm,bcm2712";
+
+	fragment@0 {
+		target = <&i2c0if>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	clk_frag: fragment@1 {
+		target = <&cam1_clk>;
+		__overlay__ {
+			status = "okay";
+			clock-frequency = <24000000>;
+		};
+	};
+
+	fragment@2 {
+		target = <&i2c0mux>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	i2c_frag: fragment@100 {
+		target = <&i2c_csi_dsi>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			aisen_node: aisen@33 {
+				compatible = "canlab,aisen";
+				reg = <0x33>;
+				clocks = <&cam1_clk>;
+				clock-names = "xclk";
+				vdd-supply = <&cam1_reg>;
+				status = "okay";
+
+				port {
+					aisen_ep: endpoint {
+						remote-endpoint = <&csi_ep>;
+						clock-lanes = <0>;
+						/* continuous clock: no clock-noncontinuous */
+						link-frequencies =
+							/bits/ 64 <200000000>;
+					};
+				};
+			};
+		};
+	};
+
+	csi_frag: fragment@101 {
+		target = <&csi1>;
+		csi: __overlay__ {
+			status = "okay";
+
+			port {
+				csi_ep: endpoint {
+					remote-endpoint = <&aisen_ep>;
+					clock-lanes = <0>;
+				};
+			};
+		};
+	};
+
+	/* 4 lanes (default) */
+	fragment@6 {
+		target = <&aisen_ep>;
+		__overlay__ {
+			data-lanes = <1 2 3 4>;
+		};
+	};
+	fragment@7 {
+		target = <&aisen_ep>;
+		__dormant__ {
+			data-lanes = <1 2>;
+		};
+	};
+	fragment@8 {
+		target = <&csi_ep>;
+		__overlay__ {
+			data-lanes = <1 2 3 4>;
+		};
+	};
+	fragment@9 {
+		target = <&csi_ep>;
+		__dormant__ {
+			data-lanes = <1 2>;
+		};
+	};
+
+	__overrides__ {
+		cam0 = <&i2c_frag>, "target:0=",<&i2c_csi_dsi0>,
+		       <&csi_frag>, "target:0=",<&csi0>,
+		       <&clk_frag>, "target:0=",<&cam0_clk>,
+		       <&aisen_node>, "clocks:0=",<&cam0_clk>,
+		       <&aisen_node>, "vdd-supply:0=",<&cam0_reg>;
+		2lane = <0>, "-6+7-8+9";
+	};
+};
