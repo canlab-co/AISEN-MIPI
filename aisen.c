@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * AISEN MIPI CSI-2 single-channel source (DOWNSTREAM variant)
+ * AISEN MIPI CSI-2 single-channel source
  *
  * For the Raspberry Pi downstream RP1 CFE driver ("raspberrypi,rp1-cfe"),
  * which uses the classic per-pad-link model (NO V4L2 streams/routing API,
@@ -9,16 +9,12 @@
  * Presents ONE source pad, linked by the CFE to csi2 sink pad 0 / channel 0:
  *   pad0 -> csi2 sink0 -> csi2_ch0 : VC0 640x480 UYVY
  *
- * This is the same pad layout every ordinary single-stream sensor (imx219,
- * imx477, ...) uses with the downstream CFE: cfe_link_node_pads() links
- * sensor source pads to csi2 sink pads in ascending order, so a single pad
- * lands on ch0 and csi2 sink1/sink2 stay unlinked (nothing to mirror).
  *
  * 2 or 4 D-PHY data lanes, CONTINUOUS clock, link frequency from DT
  * (default 200 MHz = 400 Mbps/lane).
  *
  * Lane count = endpoint "data-lanes" (2 or 4). The overlay sets it on BOTH
- * endpoints (sensor and CSI) via the "2lane" parameter, like imx219/imx290.
+ * endpoints (sensor and CSI) via the "2lane" parameter.
  *
  * The camera free-runs a continuous clock, so it must be started/stopped over
  * I2C on every stream (reg 0x30 @ 0x33). The CFE opens its receiver BEFORE
@@ -71,6 +67,8 @@
 #define CANLAB_HEIGHT		480u
 #define CANLAB_VC		0
 #define CANLAB_DT		MIPI_CSI2_DT_YUV422_8B
+
+#define CANLAB_RESTART_DELAY_MS	20
 
 #define CANLAB_MIN_WIDTH	64u
 #define CANLAB_MIN_HEIGHT	64u
@@ -134,14 +132,18 @@ static int canlab_start(struct canlab *c)
 {
 	struct device *dev = &c->client->dev;
 	int ret;
+	
+	ret = i2c_smbus_write_byte_data(c->client, CANLAB_REG_CAMERA, CANLAB_CAMERA_OFF);
+	if (ret)
+		dev_warn(dev, "camera pre-stop failed: %d\n", ret);
 
+	msleep(CANLAB_RESTART_DELAY_MS);
 	dev_dbg(dev, "start: %u lanes, %lld Hz, %s clock\n",
 		c->num_data_lanes, c->link_freq,
 		(c->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK) ?
 			"non-continuous" : "continuous");
 
-	ret = i2c_smbus_write_byte_data(c->client, CANLAB_REG_CAMERA,
-					CANLAB_CAMERA_ON);
+	ret = i2c_smbus_write_byte_data(c->client, CANLAB_REG_CAMERA, CANLAB_CAMERA_ON);
 	if (ret)
 		dev_err(dev, "camera start failed: %d\n", ret);
 
@@ -427,10 +429,6 @@ static int canlab_parse_dt(struct canlab *c)
 				    c->num_data_lanes);
 		goto out_free;
 	}
-
-	if (c->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK)
-		dev_warn(dev,
-			 "'clock-noncontinuous' set but this source drives a continuous clock\n");
 
 	if (bus_cfg.nr_of_link_frequencies)
 		c->link_freq = bus_cfg.link_frequencies[0];
